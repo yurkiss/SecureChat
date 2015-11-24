@@ -8,21 +8,15 @@ package ua.softserve.chat.server.ua.softserve.chat.server.nio;
 import ua.softserve.chat.security.Security;
 import ua.softserve.chat.server.*;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.*;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.security.InvalidKeyException;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.NoSuchAlgorithmException;
-import java.security.PrivateKey;
-import java.security.PublicKey;
+import java.nio.ByteBuffer;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.channels.SocketChannel;
+import java.security.*;
+import java.security.cert.CertificateException;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
@@ -35,9 +29,10 @@ import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import javax.net.ServerSocketFactory;
+import javax.net.ssl.*;
+import java.nio.Buffer;
 
 /**
- *
  * @author User
  */
 public class NIOServer {
@@ -98,64 +93,142 @@ public class NIOServer {
      */
     public void start() {
 
-        ServerSocketFactory socketFactory = mServerSecurityFactory.getServerSocketFactory();
-
         try {
 
-            ServerSocket serverSocket = mServerSecurityFactory.createServerSocket(socketFactory, 8084);
-            mClients = new LinkedList<>();
+            char[] passphrase = "12345678".toCharArray();
+
+            // First initialize the key and trust material
+            KeyStore ksKeys = KeyStore.getInstance("JKS");
+            ksKeys.load(new FileInputStream("C:/Users/yrid/IdeaProjects/SecureChat/mySrvKeyStore"), passphrase);
+            KeyStore ksTrust = KeyStore.getInstance("JKS");
+            ksTrust.load(new FileInputStream("C:/Users/yrid/IdeaProjects/SecureChat/mySrvTrustStore"), passphrase);
+
+            // KeyManagers decide which key material to use
+            KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
+            kmf.init(ksKeys, passphrase);
+
+            // TrustManagers decide whether to allow connections
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance("SunX509");
+            tmf.init(ksTrust);
+
+
+            SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
+
+            String hostname = "127.0.0.1";
+            int port = 8084;
+
+            // Create the engine
+            SSLEngine engine = sslContext.createSSLEngine(hostname, port);
+
+            // Use as client
+            engine.setUseClientMode(false);
 
             init();
 
+            mClients = new LinkedList<>();
+
+
+            SSLSession session = engine.getSession();
+
+
+//            ServerSocketChannel serverSocketChannel = ServerSocketChannel.open();
+//            serverSocketChannel.configureBlocking(false);
+//            ServerSocket serverSocket = serverSocketChannel.socket();
+//            serverSocket.bind(new InetSocketAddress(port));
+
             System.out.println("NIOServer started.");
 
-            while (true) {
-                try {
-                    Socket socket = mServerSecurityFactory.acceptSocket(serverSocket);
-                    System.out.println("New client connected.");
-                    clientsCounter++;
+            //while(true){
+            //    SocketChannel socketChannel = serverSocketChannel.accept();
 
-                    final InputStream inputStream = socket.getInputStream();
-                    final OutputStream outputStream = socket.getOutputStream();
+            //do something with socketChannel...
+            //}
 
-                    //Send public key to client
-                    sendPublicKey(outputStream);
 
-                    SecretKey sharedSecretKey = receiveSharedSecretKey(inputStream);
-                    System.out.println(Arrays.toString(sharedSecretKey.getEncoded()));
-
-                    if (sharedSecretKey == null) {
-                        System.out.println(KEY_MISSING_EXCEPTION);
-                        DataOutputStream os = new DataOutputStream(new BufferedOutputStream(outputStream));
-                        os.writeUTF(KEY_MISSING_EXCEPTION);
-                        os.flush();
-                        socket.close();
-                        continue;
-                    }
-                    
-                    final ClientSession clientSession = new ClientSession(outputStream, inputStream, sharedSecretKey);
-                    mClients.add(clientSession);
-
-                    //Send messages to client
-                    Thread thread = new SendingThread(sharedSecretKey, SYM_CHIPHER_ALGORYTHM_NAME, outputStream);
-                    thread.setDaemon(true);
-                    thread.start();
-
-                    Thread recvThread = new ReceivingThread(sharedSecretKey, SYM_CHIPHER_ALGORYTHM_NAME, clientSession);
-                    recvThread.setDaemon(true);
-                    recvThread.start();
-
-                    //readEncodedMessages(inputStream);
-                } catch (IOException ex) {
-                    LOG.log(Level.SEVERE, null, ex);
-                }
-
-            }
-
-        } catch (IOException ex) {
-            LOG.log(Level.SEVERE, null, ex);
+        } catch (NoSuchAlgorithmException | CertificateException | UnrecoverableKeyException | KeyStoreException | IOException | KeyManagementException e) {
+            LOG.log(Level.SEVERE, null, e);
         }
 
+    }
+
+
+    void doHandshake(SocketChannel socketChannel, SSLEngine engine,
+                     ByteBuffer myNetData, ByteBuffer peerNetData) throws Exception {
+
+        // Create byte buffers to use for holding application data
+        int appBufferSize = engine.getSession().getApplicationBufferSize();
+        ByteBuffer myAppData = ByteBuffer.allocate(appBufferSize);
+        ByteBuffer peerAppData = ByteBuffer.allocate(appBufferSize);
+
+        // Begin handshake
+        engine.beginHandshake();
+        SSLEngineResult.HandshakeStatus hs = engine.getHandshakeStatus();
+
+        // Process handshaking message
+        while (hs != SSLEngineResult.HandshakeStatus.FINISHED &&
+                hs != SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING) {
+
+            switch (hs) {
+
+                case NEED_UNWRAP:
+                    // Receive handshaking data from peer
+                    if (socketChannel.read(peerNetData) < 0) {
+                        // The channel has reached end-of-stream
+                    }
+
+                    // Process incoming handshaking data
+                    peerNetData.flip();
+                    SSLEngineResult res = engine.unwrap(peerNetData, peerAppData);
+                    peerNetData.compact();
+                    hs = res.getHandshakeStatus();
+
+                    // Check status
+                    switch (res.getStatus()) {
+                        case OK :
+                            // Handle OK status
+                            break;
+
+                        // Handle other status: BUFFER_UNDERFLOW, BUFFER_OVERFLOW, CLOSED
+                        //...
+                    }
+                    break;
+
+                case NEED_WRAP :
+                    // Empty the local network packet buffer.
+                    myNetData.clear();
+
+                    // Generate handshaking data
+                    res = engine.wrap(myAppData, myNetData);
+                    hs = res.getHandshakeStatus();
+
+                    // Check status
+                    switch (res.getStatus()) {
+                        case OK :
+                            myNetData.flip();
+
+                            // Send the handshaking data to peer
+                            while (myNetData.hasRemaining()) {
+                                socketChannel.write(myNetData);
+                            }
+                            break;
+
+                        // Handle other status:  BUFFER_OVERFLOW, BUFFER_UNDERFLOW, CLOSED
+                        //...
+                    }
+                    break;
+
+                case NEED_TASK :
+                    // Handle blocking tasks
+                    break;
+
+                // Handle other status:  // FINISHED or NOT_HANDSHAKING
+                //...
+            }
+        }
+
+        // Processes after handshaking
+        //...
     }
 
     private SecretKey receiveSharedSecretKey(InputStream is) {
@@ -209,7 +282,7 @@ public class NIOServer {
         }
     }
 
-//    private void readEncodedMessages(InputStream in) {
+    //    private void readEncodedMessages(InputStream in) {
 //        try {
 //            //Read client's massages
 //            String str;
