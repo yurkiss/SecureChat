@@ -13,13 +13,13 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.ByteBuffer;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.security.*;
 import java.security.cert.CertificateException;
-import java.util.Arrays;
-import java.util.LinkedList;
-import java.util.List;
+import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.crypto.BadPaddingException;
@@ -31,6 +31,17 @@ import javax.crypto.spec.SecretKeySpec;
 import javax.net.ServerSocketFactory;
 import javax.net.ssl.*;
 import java.nio.Buffer;
+
+
+class ClientSession {
+
+    public int id;
+    private static int counter;
+
+    public ClientSession() {
+        this.id = counter++;
+    }
+}
 
 /**
  * @author User
@@ -88,6 +99,7 @@ public class NIOServer {
         }
     }
 
+
     /**
      * NIOServer starts here
      */
@@ -118,32 +130,63 @@ public class NIOServer {
             String hostname = "127.0.0.1";
             int port = 8084;
 
-            // Create the engine
-            SSLEngine engine = sslContext.createSSLEngine(hostname, port);
+            //Starting server
+            ServerSocketChannel serverSocketChannel = ServerSocketChannel.open();
+            serverSocketChannel.configureBlocking(false);
 
-            // Use as client
-            engine.setUseClientMode(false);
-
-            init();
-
-            mClients = new LinkedList<>();
-
-
-            SSLSession session = engine.getSession();
-
-
-//            ServerSocketChannel serverSocketChannel = ServerSocketChannel.open();
-//            serverSocketChannel.configureBlocking(false);
-//            ServerSocket serverSocket = serverSocketChannel.socket();
-//            serverSocket.bind(new InetSocketAddress(port));
-
+            ServerSocket serverSocket = serverSocketChannel.socket();
+            serverSocket.bind(new InetSocketAddress(port));
             System.out.println("NIOServer started.");
 
-            //while(true){
-            //    SocketChannel socketChannel = serverSocketChannel.accept();
+            //Open selector
+            Selector selector = Selector.open();
 
-            //do something with socketChannel...
-            //}
+            SelectionKey selectionKey = serverSocketChannel.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE, new ClientSession());
+
+
+            Thread thread = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        while (true) {
+
+                            SocketChannel socketChannel = serverSocketChannel.accept();
+                            if (socketChannel != null) {
+
+                            }
+                        }
+                    } catch (IOException e) {
+                        LOG.log(Level.SEVERE, null, e);
+                    }
+
+                }
+            });
+
+
+
+            //Start selection
+            while (true) {
+                int readyChannels = selector.select();
+                if (readyChannels > 0) {
+                    Set<SelectionKey> selectionKeys = selector.selectedKeys();
+                    Iterator<SelectionKey> iterator = selectionKeys.iterator();
+
+                    while (iterator.hasNext()) {
+                        SelectionKey key = iterator.next();
+
+                        ClientSession attachment = (ClientSession) key.attachment();
+
+                        if (key.isReadable()) {
+
+                        } else if (key.isWritable()) {
+
+                        }
+
+                        iterator.remove();
+                    }
+
+                }
+            }
 
 
         } catch (NoSuchAlgorithmException | CertificateException | UnrecoverableKeyException | KeyStoreException | IOException | KeyManagementException e) {
@@ -151,6 +194,12 @@ public class NIOServer {
         }
 
     }
+
+//                // Create the engine
+//                SSLEngine engine = sslContext.createSSLEngine(hostname, port);
+//                // Use as client
+//                engine.setUseClientMode(false);
+    //do something with socketChannel...
 
 
     void doHandshake(SocketChannel socketChannel, SSLEngine engine,
@@ -185,7 +234,7 @@ public class NIOServer {
 
                     // Check status
                     switch (res.getStatus()) {
-                        case OK :
+                        case OK:
                             // Handle OK status
                             break;
 
@@ -194,7 +243,7 @@ public class NIOServer {
                     }
                     break;
 
-                case NEED_WRAP :
+                case NEED_WRAP:
                     // Empty the local network packet buffer.
                     myNetData.clear();
 
@@ -204,7 +253,7 @@ public class NIOServer {
 
                     // Check status
                     switch (res.getStatus()) {
-                        case OK :
+                        case OK:
                             myNetData.flip();
 
                             // Send the handshaking data to peer
@@ -218,7 +267,7 @@ public class NIOServer {
                     }
                     break;
 
-                case NEED_TASK :
+                case NEED_TASK:
                     // Handle blocking tasks
                     break;
 
