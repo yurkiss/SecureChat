@@ -11,7 +11,6 @@ import ua.softserve.chat.server.*;
 import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
-import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
@@ -28,19 +27,50 @@ import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
-import javax.net.ServerSocketFactory;
 import javax.net.ssl.*;
-import java.nio.Buffer;
 
 
 class ClientSession {
 
     public int id;
-    private static int counter;
+    private SocketChannel socketChannel;
+    private boolean endOfStreamReached;
 
-    public ClientSession() {
-        this.id = counter++;
+    private static int sCounter;
+
+    public ClientSession(SocketChannel channel) {
+        this.socketChannel = channel;
+        this.id = sCounter++;
     }
+
+    public int read(ByteBuffer byteBuffer) throws IOException {
+        int bytesRead = socketChannel.read(byteBuffer);
+        int totalBytesRead = bytesRead;
+
+        while(bytesRead > 0){
+            bytesRead = socketChannel.read(byteBuffer);
+            totalBytesRead += bytesRead;
+        }
+
+        if(bytesRead == -1){
+            this.endOfStreamReached = true;
+        }
+
+        return totalBytesRead;
+    }
+
+    public int write(ByteBuffer byteBuffer) throws IOException{
+        int bytesWritten      = socketChannel.write(byteBuffer);
+        int totalBytesWritten = bytesWritten;
+
+        while(bytesWritten > 0 && byteBuffer.hasRemaining()){
+            bytesWritten = socketChannel.write(byteBuffer);
+            totalBytesWritten += bytesWritten;
+        }
+
+        return totalBytesWritten;
+    }
+
 }
 
 /**
@@ -141,7 +171,7 @@ public class NIOServer {
             //Open selector
             Selector selector = Selector.open();
 
-            SelectionKey selectionKey = serverSocketChannel.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE, new ClientSession());
+            SelectionKey selectionKey = serverSocketChannel.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE);
 
 
             Thread thread = new Thread(new Runnable() {
@@ -152,7 +182,8 @@ public class NIOServer {
 
                             SocketChannel socketChannel = serverSocketChannel.accept();
                             if (socketChannel != null) {
-
+                                socketChannel.configureBlocking(false);
+                                socketChannel.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE);
                             }
                         }
                     } catch (IOException e) {
@@ -174,7 +205,7 @@ public class NIOServer {
                     while (iterator.hasNext()) {
                         SelectionKey key = iterator.next();
 
-                        ClientSession attachment = (ClientSession) key.attachment();
+                        //ClientSession attachment = (ClientSession) key.attachment();
 
                         if (key.isReadable()) {
 
