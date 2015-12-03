@@ -3,7 +3,7 @@
  * To change this template file, choose Tools | Templates
  * and open the template in the editor.
  */
-package ua.softserve.chat.server.ua.softserve.chat.server.nio;
+package ua.softserve.chat.server.nio;
 
 import ua.softserve.chat.security.Security;
 import ua.softserve.chat.server.*;
@@ -12,13 +12,18 @@ import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
+import java.nio.charset.Charset;
+import java.nio.charset.CharsetDecoder;
 import java.security.*;
 import java.security.cert.CertificateException;
 import java.util.*;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.crypto.BadPaddingException;
@@ -35,6 +40,8 @@ class ClientSession {
     public int id;
     private SocketChannel socketChannel;
     private boolean endOfStreamReached;
+    public ByteBuffer byteBuffer;
+
 
     private static int sCounter;
 
@@ -47,23 +54,23 @@ class ClientSession {
         int bytesRead = socketChannel.read(byteBuffer);
         int totalBytesRead = bytesRead;
 
-        while(bytesRead > 0){
+        while (bytesRead > 0) {
             bytesRead = socketChannel.read(byteBuffer);
             totalBytesRead += bytesRead;
         }
 
-        if(bytesRead == -1){
+        if (bytesRead == -1) {
             this.endOfStreamReached = true;
         }
 
         return totalBytesRead;
     }
 
-    public int write(ByteBuffer byteBuffer) throws IOException{
-        int bytesWritten      = socketChannel.write(byteBuffer);
+    public int write(ByteBuffer byteBuffer) throws IOException {
+        int bytesWritten = socketChannel.write(byteBuffer);
         int totalBytesWritten = bytesWritten;
 
-        while(bytesWritten > 0 && byteBuffer.hasRemaining()){
+        while (bytesWritten > 0 && byteBuffer.hasRemaining()) {
             bytesWritten = socketChannel.write(byteBuffer);
             totalBytesWritten += bytesWritten;
         }
@@ -170,53 +177,144 @@ public class NIOServer {
 
             //Open selector
             Selector selector = Selector.open();
+            Selector readSelector = Selector.open();
+            Selector writeSelector = Selector.open();
 
-            SelectionKey selectionKey = serverSocketChannel.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE);
+            serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT);
 
+            BlockingQueue<String> messagesQueue = new LinkedBlockingQueue<>();
 
             Thread thread = new Thread(new Runnable() {
+
                 @Override
                 public void run() {
                     try {
-                        while (true) {
 
-                            SocketChannel socketChannel = serverSocketChannel.accept();
-                            if (socketChannel != null) {
-                                socketChannel.configureBlocking(false);
-                                socketChannel.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE);
+                        //Start selection
+                        while (true) {
+                            int readyChannels = readSelector.selectNow();
+                            if (readyChannels > 0) {
+
+                                Set<SelectionKey> selectionKeys = readSelector.selectedKeys();
+                                Iterator<SelectionKey> iterator = selectionKeys.iterator();
+
+                                while (iterator.hasNext()) {
+                                    SelectionKey key = iterator.next();
+
+                                    if (key.isReadable()) {
+                                        ClientSession session = (ClientSession) key.attachment();
+                                        ByteBuffer buf = ByteBuffer.allocate(1024);
+                                        int count = session.read(buf);
+                                        buf.flip();
+                                        CharBuffer charBuffer = Charset.defaultCharset().decode(buf);
+                                        String str = charBuffer.toString();
+                                        System.out.println("Read " + count + " bytes from #" + session.id + ": " + str);
+                                        messagesQueue.put(str);
+
+                                    //} else if (key.isWritable()) {
+                                    }
+
+                                    iterator.remove();
+
+                                }
+
                             }
                         }
+
+                    } catch (IOException | InterruptedException e) {
+                        LOG.log(Level.SEVERE, null, e);
+                    }
+
+
+                }
+            });
+            thread.start();
+
+            Thread writingThread = new Thread(new Runnable() {
+
+                @Override
+                public void run() {
+                    try {
+
+                        //Start selection
+                        while (true) {
+
+                                int readyChannels = readSelector.selectNow();
+                                if (readyChannels > 0) {
+                                    Set<SelectionKey> selectionKeys = readSelector.selectedKeys();
+                                    Iterator<SelectionKey> iterator = selectionKeys.iterator();
+
+                                    //Iterator<String> messagesIterator = messagesQueue.iterator();
+                                    while (!messagesQueue.isEmpty()) {
+                                        String message = messagesQueue.poll();
+
+                                        while (iterator.hasNext()) {
+                                            SelectionKey key = iterator.next();
+                                            if (key.isWritable()) {
+
+                                                ClientSession session = (ClientSession) key.attachment();
+
+                                                ByteBuffer buffer = Charset.defaultCharset().encode(message);
+                                                buffer.position(buffer.capacity());
+                                                buffer.flip();
+                                                session.write(buffer);
+
+                                            }
+
+                                            iterator.remove();
+
+                                        }
+
+                                        //messagesIterator.remove();
+                                    }
+
+                                }
+
+
+                        }
+
                     } catch (IOException e) {
                         LOG.log(Level.SEVERE, null, e);
                     }
 
+
                 }
             });
+            writingThread.start();
 
 
 
-            //Start selection
-            while (true) {
-                int readyChannels = selector.select();
-                if (readyChannels > 0) {
-                    Set<SelectionKey> selectionKeys = selector.selectedKeys();
-                    Iterator<SelectionKey> iterator = selectionKeys.iterator();
+            try {
+                while (true) {
 
-                    while (iterator.hasNext()) {
-                        SelectionKey key = iterator.next();
+                    int readyChannels = selector.select();
+                    if (readyChannels > 0) {
 
-                        //ClientSession attachment = (ClientSession) key.attachment();
+                        Set<SelectionKey> selectionKeys = selector.selectedKeys();
+                        Iterator<SelectionKey> iterator = selectionKeys.iterator();
 
-                        if (key.isReadable()) {
+                        while (iterator.hasNext()) {
+                            SelectionKey key = iterator.next();
 
-                        } else if (key.isWritable()) {
+                            if (key.isAcceptable()) {
+                                ServerSocketChannel srv = (ServerSocketChannel) key.channel();
+                                SocketChannel socketChannel = srv.accept();
+                                if (socketChannel != null) {
+                                    socketChannel.configureBlocking(false);
+                                    ClientSession session = new ClientSession(socketChannel);
+                                    socketChannel.register(readSelector, SelectionKey.OP_READ | SelectionKey.OP_WRITE, session);
+                                    //socketChannel.register(writeSelector, SelectionKey.OP_WRITE, session);
+                                    System.out.println("Accepted connection from " + socketChannel.getRemoteAddress());
+                                }
+                            }
 
+                            iterator.remove();
                         }
 
-                        iterator.remove();
                     }
-
                 }
+            } catch (IOException e) {
+                LOG.log(Level.SEVERE, null, e);
             }
 
 

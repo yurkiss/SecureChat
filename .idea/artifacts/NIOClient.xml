@@ -1,0 +1,12 @@
+<component name="ArtifactManager">
+  <artifact type="jar" build-on-make="true" name="NIOClient">
+    <output-path>$PROJECT_DIR$/out/artifacts/NIOClient</output-path>
+    <root id="archive" name="NIOClient.jar">
+      <element id="module-output" name="Client" />
+      <element id="module-output" name="Security" />
+      <element id="directory" name="META-INF">
+        <element id="file-copy" path="$PROJECT_DIR$/Client/src/ua/softserve/chat/nio/META-INF/MANIFEST.MF" />
+      </element>
+    </root>
+  </artifact>
+</component>
