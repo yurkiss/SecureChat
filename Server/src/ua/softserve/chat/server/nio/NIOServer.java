@@ -13,10 +13,7 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.Selector;
-import java.nio.channels.ServerSocketChannel;
-import java.nio.channels.SocketChannel;
+import java.nio.channels.*;
 import java.nio.charset.Charset;
 import java.nio.charset.CharsetDecoder;
 import java.security.*;
@@ -184,6 +181,9 @@ public class NIOServer {
 
             BlockingQueue<String> messagesQueue = new LinkedBlockingQueue<>();
 
+
+            ReadableByteChannel readableByteChannel = Channels.newChannel(new FileInputStream("D:\\asd.txt"));
+
             Thread thread = new Thread(new Runnable() {
 
                 @Override
@@ -203,7 +203,9 @@ public class NIOServer {
 
                                     if (key.isReadable()) {
                                         ClientSession session = (ClientSession) key.attachment();
+
                                         ByteBuffer buf = ByteBuffer.allocate(1024);
+                                        ByteBuffer slice = buf.slice();
                                         int count = session.read(buf);
                                         buf.flip();
                                         CharBuffer charBuffer = Charset.defaultCharset().decode(buf);
@@ -211,40 +213,20 @@ public class NIOServer {
                                         System.out.println("Read " + count + " bytes from #" + session.id + ": " + str);
                                         messagesQueue.put(str);
 
-                                    //} else if (key.isWritable()) {
+                                        iterator.remove();
                                     }
-
-                                    iterator.remove();
 
                                 }
 
                             }
-                        }
 
-                    } catch (IOException | InterruptedException e) {
-                        LOG.log(Level.SEVERE, null, e);
-                    }
+                            if(!messagesQueue.isEmpty()) {
 
-
-                }
-            });
-            thread.start();
-
-            Thread writingThread = new Thread(new Runnable() {
-
-                @Override
-                public void run() {
-                    try {
-
-                        //Start selection
-                        while (true) {
-
-                                int readyChannels = readSelector.selectNow();
+                                readyChannels = readSelector.selectNow();
                                 if (readyChannels > 0) {
                                     Set<SelectionKey> selectionKeys = readSelector.selectedKeys();
                                     Iterator<SelectionKey> iterator = selectionKeys.iterator();
 
-                                    //Iterator<String> messagesIterator = messagesQueue.iterator();
                                     while (!messagesQueue.isEmpty()) {
                                         String message = messagesQueue.poll();
 
@@ -257,32 +239,28 @@ public class NIOServer {
                                                 ByteBuffer buffer = Charset.defaultCharset().encode(message);
                                                 buffer.position(buffer.capacity());
                                                 buffer.flip();
-                                                session.write(buffer);
+                                                int count = session.write(buffer);
+                                                System.out.println("Sent " + count + " bytes to #" + session.id);
+
+                                                iterator.remove();
 
                                             }
-
-                                            iterator.remove();
-
                                         }
-
-                                        //messagesIterator.remove();
                                     }
 
                                 }
-
-
+                            }
+                            Thread.sleep(100);
                         }
 
-                    } catch (IOException e) {
+                    } catch (IOException | InterruptedException e) {
                         LOG.log(Level.SEVERE, null, e);
                     }
 
 
                 }
             });
-            writingThread.start();
-
-
+            thread.start();
 
             try {
                 while (true) {
