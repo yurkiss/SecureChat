@@ -2,11 +2,6 @@
 <module type="JAVA_MODULE" version="4">
   <component name="NewModuleRootManager" inherit-compiler-output="true">
     <exclude-output />
-    <content url="file://$USER_HOME$/Documents/NetBeansProjects/JavaNIOExample/java-nio-server-master/src">
-      <sourceFolder url="file://$USER_HOME$/Documents/NetBeansProjects/JavaNIOExample/java-nio-server-master/src/test/java/com.jenkov.nioserver" isTestSource="false" />
-      <sourceFolder url="file://$USER_HOME$/Documents/NetBeansProjects/JavaNIOExample/java-nio-server-master/src/main/java" isTestSource="false" />
-      <sourceFolder url="file://$USER_HOME$/Documents/NetBeansProjects/JavaNIOExample/java-nio-server-master/src/test" isTestSource="true" />
-    </content>
     <content url="file://$MODULE_DIR$">
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
     </content>

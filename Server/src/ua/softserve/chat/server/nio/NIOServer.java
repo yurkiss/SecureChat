@@ -15,7 +15,6 @@ import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.channels.*;
 import java.nio.charset.Charset;
-import java.nio.charset.CharsetDecoder;
 import java.security.*;
 import java.security.cert.CertificateException;
 import java.util.*;
@@ -32,57 +31,11 @@ import javax.crypto.spec.SecretKeySpec;
 import javax.net.ssl.*;
 
 
-class ClientSession {
-
-    public int id;
-    private SocketChannel socketChannel;
-    private boolean endOfStreamReached;
-    public ByteBuffer byteBuffer;
-
-
-    private static int sCounter;
-
-    public ClientSession(SocketChannel channel) {
-        this.socketChannel = channel;
-        this.id = sCounter++;
-    }
-
-    public int read(ByteBuffer byteBuffer) throws IOException {
-        int bytesRead = socketChannel.read(byteBuffer);
-        int totalBytesRead = bytesRead;
-
-        while (bytesRead > 0) {
-            bytesRead = socketChannel.read(byteBuffer);
-            totalBytesRead += bytesRead;
-        }
-
-        if (bytesRead == -1) {
-            this.endOfStreamReached = true;
-        }
-
-        return totalBytesRead;
-    }
-
-    public int write(ByteBuffer byteBuffer) throws IOException {
-        int bytesWritten = socketChannel.write(byteBuffer);
-        int totalBytesWritten = bytesWritten;
-
-        while (bytesWritten > 0 && byteBuffer.hasRemaining()) {
-            bytesWritten = socketChannel.write(byteBuffer);
-            totalBytesWritten += bytesWritten;
-        }
-
-        return totalBytesWritten;
-    }
-
-}
 
 /**
  * @author User
  */
 public class NIOServer {
-
-    private final ServerFactory mServerSecurityFactory;
 
     private static volatile NIOServer instance;
 
@@ -90,57 +43,49 @@ public class NIOServer {
     private PrivateKey mPrivateKey;
 
     private static int clientsCounter;
-    public volatile List<ClientSession> mClients;
+    public volatile List<SSLChannelSession> mClients;
 
     private static final Logger LOG = Logger.getLogger(NIOServer.class.getName());
     private static final String SYM_CHIPHER_ALGORYTHM_NAME = "AES/ECB/PKCS5Padding";
     private static final String ASYM_CHIPHER_ALGORYTHM_NAME = "RSA/ECB/PKCS1Padding";
     private static final String KEY_MISSING_EXCEPTION = "Shared key missing exception!";
 
+    private SSLContext sslContext;
+    private final int port;
 
-    public static NIOServer getInstance() {
-        return getInstance(Security.UNSECURE);
+    public static NIOServer getInstance(int port) {
+        return getInstance(Security.UNSECURE, port);
     }
 
-    public static synchronized NIOServer getInstance(Security security) {
+    public static synchronized NIOServer getInstance(Security security, int port) {
         if (instance == null) {
-            instance = new NIOServer(security);
+            instance = new NIOServer(security, port);
         }
         return instance;
     }
 
-    private NIOServer() {
-        this(Security.UNSECURE);
+    private NIOServer(int port) {
+        this(Security.UNSECURE, port);
     }
 
-    private NIOServer(Security security) {
+    private NIOServer(Security security, int port) {
 
         switch (security) {
             case SSL:
-                System.setProperty("javax.net.ssl.keyStore", "C:/Users/yrid/IdeaProjects/SecureChat/mySrvKeyStore");
-                System.setProperty("javax.net.ssl.keyStorePassword", "12345678");
-                System.setProperty("javax.net.ssl.trustStore", "C:/Users/yrid/IdeaProjects/SecureChat/mySrvTrustStore");
-                System.setProperty("javax.net.ssl.trustStorePassword", "12345678");
-
-                mServerSecurityFactory = new SSLServerFactory();
+                initKeyStores();
                 break;
             case UNSECURE:
-                mServerSecurityFactory = new UnsecureServerFactory();
                 break;
             default:
-                mServerSecurityFactory = new UnsecureServerFactory();
                 break;
         }
+
+        this.port = port;
     }
 
 
-    /**
-     * NIOServer starts here
-     */
-    public void start() {
-
+    void initKeyStores() {
         try {
-
             char[] passphrase = "12345678".toCharArray();
 
             // First initialize the key and trust material
@@ -157,12 +102,22 @@ public class NIOServer {
             TrustManagerFactory tmf = TrustManagerFactory.getInstance("SunX509");
             tmf.init(ksTrust);
 
-
-            SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext = SSLContext.getInstance("TLS");
             sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
 
-            String hostname = "127.0.0.1";
-            int port = 8084;
+
+        } catch (IOException | CertificateException | UnrecoverableKeyException | KeyStoreException | NoSuchAlgorithmException | KeyManagementException e) {
+            e.printStackTrace();
+        }
+    }
+
+
+    /**
+     * NIOServer starts here
+     */
+    public void start() {
+
+        try {
 
             //Starting server
             ServerSocketChannel serverSocketChannel = ServerSocketChannel.open();
@@ -182,8 +137,6 @@ public class NIOServer {
             BlockingQueue<String> messagesQueue = new LinkedBlockingQueue<>();
 
 
-            ReadableByteChannel readableByteChannel = Channels.newChannel(new FileInputStream("D:\\asd.txt"));
-
             Thread thread = new Thread(new Runnable() {
 
                 @Override
@@ -202,10 +155,9 @@ public class NIOServer {
                                     SelectionKey key = iterator.next();
 
                                     if (key.isReadable()) {
-                                        ClientSession session = (ClientSession) key.attachment();
+                                        SSLChannelSession session = (SSLChannelSession) key.attachment();
 
                                         ByteBuffer buf = ByteBuffer.allocate(1024);
-                                        ByteBuffer slice = buf.slice();
                                         int count = session.read(buf);
                                         buf.flip();
                                         CharBuffer charBuffer = Charset.defaultCharset().decode(buf);
@@ -220,7 +172,7 @@ public class NIOServer {
 
                             }
 
-                            if(!messagesQueue.isEmpty()) {
+                            if (!messagesQueue.isEmpty()) {
 
                                 readyChannels = readSelector.selectNow();
                                 if (readyChannels > 0) {
@@ -234,7 +186,7 @@ public class NIOServer {
                                             SelectionKey key = iterator.next();
                                             if (key.isWritable()) {
 
-                                                ClientSession session = (ClientSession) key.attachment();
+                                                SSLChannelSession session = (SSLChannelSession) key.attachment();
 
                                                 ByteBuffer buffer = Charset.defaultCharset().encode(message);
                                                 buffer.position(buffer.capacity());
@@ -279,7 +231,7 @@ public class NIOServer {
                                 SocketChannel socketChannel = srv.accept();
                                 if (socketChannel != null) {
                                     socketChannel.configureBlocking(false);
-                                    ClientSession session = new ClientSession(socketChannel);
+                                    SSLChannelSession session = new SSLChannelSession(socketChannel, sslContext);
                                     socketChannel.register(readSelector, SelectionKey.OP_READ | SelectionKey.OP_WRITE, session);
                                     //socketChannel.register(writeSelector, SelectionKey.OP_WRITE, session);
                                     System.out.println("Accepted connection from " + socketChannel.getRemoteAddress());
@@ -296,7 +248,7 @@ public class NIOServer {
             }
 
 
-        } catch (NoSuchAlgorithmException | CertificateException | UnrecoverableKeyException | KeyStoreException | IOException | KeyManagementException e) {
+        } catch (IOException e) {
             LOG.log(Level.SEVERE, null, e);
         }
 
@@ -308,84 +260,6 @@ public class NIOServer {
 //                engine.setUseClientMode(false);
     //do something with socketChannel...
 
-
-    void doHandshake(SocketChannel socketChannel, SSLEngine engine,
-                     ByteBuffer myNetData, ByteBuffer peerNetData) throws Exception {
-
-        // Create byte buffers to use for holding application data
-        int appBufferSize = engine.getSession().getApplicationBufferSize();
-        ByteBuffer myAppData = ByteBuffer.allocate(appBufferSize);
-        ByteBuffer peerAppData = ByteBuffer.allocate(appBufferSize);
-
-        // Begin handshake
-        engine.beginHandshake();
-        SSLEngineResult.HandshakeStatus hs = engine.getHandshakeStatus();
-
-        // Process handshaking message
-        while (hs != SSLEngineResult.HandshakeStatus.FINISHED &&
-                hs != SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING) {
-
-            switch (hs) {
-
-                case NEED_UNWRAP:
-                    // Receive handshaking data from peer
-                    if (socketChannel.read(peerNetData) < 0) {
-                        // The channel has reached end-of-stream
-                    }
-
-                    // Process incoming handshaking data
-                    peerNetData.flip();
-                    SSLEngineResult res = engine.unwrap(peerNetData, peerAppData);
-                    peerNetData.compact();
-                    hs = res.getHandshakeStatus();
-
-                    // Check status
-                    switch (res.getStatus()) {
-                        case OK:
-                            // Handle OK status
-                            break;
-
-                        // Handle other status: BUFFER_UNDERFLOW, BUFFER_OVERFLOW, CLOSED
-                        //...
-                    }
-                    break;
-
-                case NEED_WRAP:
-                    // Empty the local network packet buffer.
-                    myNetData.clear();
-
-                    // Generate handshaking data
-                    res = engine.wrap(myAppData, myNetData);
-                    hs = res.getHandshakeStatus();
-
-                    // Check status
-                    switch (res.getStatus()) {
-                        case OK:
-                            myNetData.flip();
-
-                            // Send the handshaking data to peer
-                            while (myNetData.hasRemaining()) {
-                                socketChannel.write(myNetData);
-                            }
-                            break;
-
-                        // Handle other status:  BUFFER_OVERFLOW, BUFFER_UNDERFLOW, CLOSED
-                        //...
-                    }
-                    break;
-
-                case NEED_TASK:
-                    // Handle blocking tasks
-                    break;
-
-                // Handle other status:  // FINISHED or NOT_HANDSHAKING
-                //...
-            }
-        }
-
-        // Processes after handshaking
-        //...
-    }
 
     private SecretKey receiveSharedSecretKey(InputStream is) {
         try {
@@ -455,43 +329,9 @@ public class NIOServer {
 //        }
 //    }
     public static void main(String[] args) {
-        NIOServer server = NIOServer.getInstance(Security.UNSECURE);
+        NIOServer server = NIOServer.getInstance(Security.UNSECURE, 8084);
         server.start();
     }
 
 }
 
-/*
-private static SSLServerSocketFactory getServerSocketFactory(String type) {
-
-        if (type.equals("TLS")) {
-            SSLServerSocketFactory ssf = null;
-            try {
-                // set up key manager to do server authentication
-                SSLContext ctx;
-                KeyManagerFactory kmf;
-                KeyStore ks;
-                char[] passphrase = "passphrase".toCharArray();
-
-                ctx = SSLContext.getInstance(type);
-                kmf = KeyManagerFactory.getInstance("SunX509");
-                ks = KeyStore.getInstance("JKS");
-
-                ks.load(new FileInputStream("testkeys"), passphrase);
-                kmf.init(ks, passphrase);
-                ctx.init(kmf.getKeyManagers(), null, null);
-
-                ssf = ctx.getServerSocketFactory();
-                return ssf;
-            
-
-} catch (Exception e) {
-                Logger.getLogger(NIOServer.class
-.getName()).log(Level.SEVERE, null, e);
-            }
-        } else {
-            return (SSLServerSocketFactory) SSLServerSocketFactory.getDefault();
-        }
-        return null;
-    }
- */
