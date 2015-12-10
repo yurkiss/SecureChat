@@ -7,6 +7,7 @@ import javax.net.ssl.SSLSession;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
+import java.util.logging.Logger;
 
 /**
  * Created by yrid on 09.12.2015.
@@ -14,13 +15,13 @@ import java.nio.channels.SocketChannel;
 public class SSLChannelSession {
 
     private static int sCounter;
-
     public int id;
 
     private SocketChannel socketChannel;
-    private boolean endOfStreamReached;
 
+    private boolean endOfStreamReached;
     private SSLSession session;
+
     private final SSLEngine engine;
 
     //input from pear
@@ -31,11 +32,14 @@ public class SSLChannelSession {
     private final ByteBuffer outAppData;
     private final ByteBuffer outNetData;
 
-    private boolean handshacking = false;
+    private final ByteBuffer dummy;
+
+    private boolean handshaking;
     private SSLEngineResult.HandshakeStatus handshakeStatus;
 
+    private static final Logger LOG = Logger.getLogger(SSLChannelSession.class.getName());
 
-    public SSLChannelSession(SocketChannel channel, SSLContext sslContext ) {
+    public SSLChannelSession(SocketChannel channel, SSLContext sslContext) {
         this.socketChannel = channel;
         this.id = sCounter++;
         String hostname = "127.0.0.1";
@@ -54,6 +58,8 @@ public class SSLChannelSession {
         outNetData = ByteBuffer.allocate(session.getPacketBufferSize());
         peerAppData = ByteBuffer.allocate(session.getApplicationBufferSize());
         peerNetData = ByteBuffer.allocate(session.getPacketBufferSize());
+
+        dummy = ByteBuffer.allocate(0);
 
     }
 
@@ -74,6 +80,34 @@ public class SSLChannelSession {
         return totalBytesRead;
     }
 
+    public int readRaw(ByteBuffer byteBuffer) throws IOException {
+        int bytesRead = socketChannel.read(byteBuffer);
+        int totalBytesRead = bytesRead;
+
+        while (bytesRead > 0) {
+            bytesRead = socketChannel.read(byteBuffer);
+            totalBytesRead += bytesRead;
+        }
+
+        if (bytesRead == -1) {
+            this.endOfStreamReached = true;
+        }
+
+        return totalBytesRead;
+    }
+
+    public int writeRaw(ByteBuffer byteBuffer) throws IOException {
+        int bytesWritten = socketChannel.write(byteBuffer);
+        int totalBytesWritten = bytesWritten;
+
+        while (bytesWritten > 0 && byteBuffer.hasRemaining()) {
+            bytesWritten = socketChannel.write(byteBuffer);
+            totalBytesWritten += bytesWritten;
+        }
+
+        return totalBytesWritten;
+    }
+
     public int write(ByteBuffer byteBuffer) throws IOException {
         int bytesWritten = socketChannel.write(byteBuffer);
         int totalBytesWritten = bytesWritten;
@@ -87,29 +121,29 @@ public class SSLChannelSession {
     }
 
 
-    void doHandshake(SocketChannel socketChannel, SSLEngine engine,
-                     ByteBuffer myNetData, ByteBuffer peerNetData) throws Exception {
+    void doHandshake() throws Exception {
 
         // Create byte buffers to use for holding application data
         int appBufferSize = engine.getSession().getApplicationBufferSize();
         ByteBuffer myAppData = ByteBuffer.allocate(appBufferSize);
-        ByteBuffer peerAppData = ByteBuffer.allocate(appBufferSize);
+        //ByteBuffer peerAppData = ByteBuffer.allocate(appBufferSize);
 
         // Begin handshake
+        handshaking = true;
         engine.beginHandshake();
         handshakeStatus = engine.getHandshakeStatus();
 
         // Process handshaking message
-        while (handshakeStatus != SSLEngineResult.HandshakeStatus.FINISHED &&
-                handshakeStatus != SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING) {
+        while (true) {
 
             switch (handshakeStatus) {
 
                 case NEED_UNWRAP:
                     // Receive handshaking data from peer
-                    if (read(peerNetData) < 0) {
+                    if (readRaw(peerNetData) < 0) {
                         // The channel has reached end-of-stream
                     }
+
 
                     // Process incoming handshaking data
                     peerNetData.flip();
@@ -122,42 +156,52 @@ public class SSLChannelSession {
                         case OK:
                             // Handle OK status
                             break;
-
-                        // Handle other status: BUFFER_UNDERFLOW, BUFFER_OVERFLOW, CLOSED
-                        //...
+                        case BUFFER_OVERFLOW:
+                            LOG.info("UNWRAP: BUFFER_OVERFLOW");
+                        case BUFFER_UNDERFLOW:
+                            LOG.info("UNWRAP: BUFFER_UNDERFLOW");
+                        case CLOSED:
+                            LOG.info("UNWRAP: CLOSED");
                     }
                     break;
 
                 case NEED_WRAP:
                     // Empty the local network packet buffer.
-                    myNetData.clear();
+                    outNetData.clear();
 
                     // Generate handshaking data
-                    res = engine.wrap(myAppData, myNetData);
+                    res = engine.wrap(dummy, outNetData);
                     handshakeStatus = res.getHandshakeStatus();
 
                     // Check status
                     switch (res.getStatus()) {
                         case OK:
-                            myNetData.flip();
-
+                            outNetData.flip();
                             // Send the handshaking data to peer
-                            while (myNetData.hasRemaining()) {
-                                socketChannel.write(myNetData);
-                            }
+                            // IOException could be thrown if the socket is dead,
+                            // needs to handle it correctly.
+                            writeRaw(outNetData);
                             break;
-
-                        // Handle other status:  BUFFER_OVERFLOW, BUFFER_UNDERFLOW, CLOSED
-                        //...
+                        case BUFFER_OVERFLOW:
+                        case BUFFER_UNDERFLOW:
+                        case CLOSED:
                     }
                     break;
 
-                case NEED_TASK:
-                    // Handle blocking tasks
+                case NEED_TASK: // Handle blocking tasks
+
+                    doTasks();
                     break;
 
-                // Handle other status:  // FINISHED or NOT_HANDSHAKING
-                //...
+                case FINISHED: // Handle finished state
+
+                    handshaking = false;
+                    return;
+
+                case NOT_HANDSHAKING:
+                    // Handle
+                    return;
+
             }
         }
 
@@ -171,6 +215,13 @@ public class SSLChannelSession {
      * thread.
      */
     private void doTasks() {
+
+//        Executor exec = Executors.newSingleThreadExecutor();
+//        Runnable task;
+//        while ((task = engine.getDelegatedTask()) != null) {
+//            exec.execute(task);
+//        }
+
         Runnable task;
         while ((task = engine.getDelegatedTask()) != null) {
             task.run();
