@@ -8,13 +8,9 @@ package ua.softserve.chat.client;
 import ua.softserve.chat.security.EncodedReader;
 import ua.softserve.chat.security.Security;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import javax.crypto.*;
+import javax.net.SocketFactory;
+import java.io.*;
 import java.net.Socket;
 import java.net.SocketException;
 import java.security.InvalidKeyException;
@@ -27,13 +23,6 @@ import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javax.crypto.BadPaddingException;
-import javax.crypto.Cipher;
-import javax.crypto.IllegalBlockSizeException;
-import javax.crypto.KeyGenerator;
-import javax.crypto.NoSuchPaddingException;
-import javax.crypto.SecretKey;
-import javax.net.SocketFactory;
 
 /**
  *

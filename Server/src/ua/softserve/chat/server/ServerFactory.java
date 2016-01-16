@@ -5,11 +5,10 @@
  */
 package ua.softserve.chat.server;
 
+import javax.net.ServerSocketFactory;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
-import javax.net.ServerSocketFactory;
-import javax.net.ssl.SSLServerSocketFactory;
 
 /**
  *

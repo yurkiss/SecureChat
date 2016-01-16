@@ -5,9 +5,9 @@
  */
 package ua.softserve.chat.server;
 
+import javax.crypto.SecretKey;
 import java.io.InputStream;
 import java.io.OutputStream;
-import javax.crypto.SecretKey;
 
 /**
  *

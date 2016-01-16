@@ -39,6 +39,13 @@ public class SSLChannelSession {
 
     private static final Logger LOG = Logger.getLogger(SSLChannelSession.class.getName());
 
+    static class SSLEngineFSM{
+
+        SSLEngineResult.HandshakeStatus status;
+        SSLEngineResult.Status wrapUnwrapStatus;
+
+    }
+
     public SSLChannelSession(SocketChannel channel, SSLContext sslContext) {
         this.socketChannel = channel;
         this.id = sCounter++;
@@ -120,6 +127,19 @@ public class SSLChannelSession {
         return totalBytesWritten;
     }
 
+    public int handleRead() throws Exception{
+
+        if(handshaking){
+            doHandshake();
+        }
+
+        return 0;
+    }
+
+    public int handleWrite(){
+
+        return 0;
+    }
 
     void doHandshake() throws Exception {
 
@@ -160,10 +180,12 @@ public class SSLChannelSession {
                             LOG.info("UNWRAP: BUFFER_OVERFLOW");
                         case BUFFER_UNDERFLOW:
                             LOG.info("UNWRAP: BUFFER_UNDERFLOW");
+                            //TODO: register for further read selection
                         case CLOSED:
                             LOG.info("UNWRAP: CLOSED");
                     }
-                    break;
+
+                    return;
 
                 case NEED_WRAP:
                     // Empty the local network packet buffer.
